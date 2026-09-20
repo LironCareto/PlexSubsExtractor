@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import argparse
 import gzip
+import json
 import sqlite3
 import sys
 from pathlib import Path
 
 LIBRARY_DB = "com.plexapp.plugins.library.db"
 BLOBS_DB = "com.plexapp.plugins.library.blobs.db"
+DEFAULT_CONFIG = Path("config.json")
 
 
 def open_readonly(db_path: Path) -> sqlite3.Connection:
@@ -42,6 +44,42 @@ def parse_path_map(value: str) -> tuple[str, str]:
         raise argparse.ArgumentTypeError("path mapping must have the form FROM=TO")
 
     return source, target
+
+
+def load_config(config_path: Path) -> dict:
+    """Load optional local configuration from JSON."""
+    if not config_path.is_file():
+        return {}
+
+    try:
+        data = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Could not read config file {config_path}: {exc}") from exc
+
+    if not isinstance(data, dict):
+        raise ValueError(f"Config file {config_path} must contain a JSON object")
+
+    return data
+
+
+def config_path_maps(config: dict) -> list[tuple[str, str]]:
+    """Read path mappings from config.json."""
+    raw = config.get("path_maps", [])
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError("'path_maps' in config must be a JSON array")
+
+    mappings: list[tuple[str, str]] = []
+    for item in raw:
+        if not isinstance(item, str):
+            raise ValueError("Each 'path_maps' entry must be a string in FROM=TO form")
+        try:
+            mappings.append(parse_path_map(item))
+        except argparse.ArgumentTypeError as exc:
+            raise ValueError(f"Invalid path mapping in config: {item!r}") from exc
+
+    return mappings
 
 
 def apply_path_maps(path: str, mappings: list[tuple[str, str]]) -> Path:
@@ -134,11 +172,22 @@ def build_parser() -> argparse.ArgumentParser:
         )
     )
     parser.add_argument(
+        "--config",
+        type=Path,
+        default=DEFAULT_CONFIG,
+        help=(
+            "Local JSON configuration file. Defaults to ./config.json if present. "
+            "The file can contain database_folder and path_maps."
+        ),
+    )
+    parser.add_argument(
         "-d",
         "--database-folder",
-        required=True,
         type=Path,
-        help="Plex 'Plug-in Support/Databases' directory",
+        help=(
+            "Plex 'Plug-in Support/Databases' directory. Overrides database_folder "
+            "from the config file."
+        ),
     )
     parser.add_argument(
         "--write",
@@ -161,8 +210,8 @@ def build_parser() -> argparse.ArgumentParser:
         type=parse_path_map,
         metavar="FROM=TO",
         help=(
-            "Map a path stored by Plex to a path visible to this machine, e.g. "
-            "--path-map /movies=/srv/media/Movies. May be repeated."
+            "Map a path stored by Plex to a path visible to this machine. "
+            "May be repeated. If supplied, command-line mappings replace config mappings."
         ),
     )
     return parser
@@ -171,8 +220,29 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = build_parser().parse_args()
 
-    library_db = args.database_folder / LIBRARY_DB
-    blob_db = args.database_folder / BLOBS_DB
+    try:
+        config = load_config(args.config)
+        configured_database = config.get("database_folder")
+
+        if args.database_folder is not None:
+            database_folder = args.database_folder
+        elif configured_database:
+            if not isinstance(configured_database, str):
+                raise ValueError("'database_folder' in config must be a string")
+            database_folder = Path(configured_database)
+        else:
+            raise ValueError(
+                "No database folder configured. Set database_folder in config.json "
+                "or pass --database-folder."
+            )
+
+        path_maps = args.path_map if args.path_map else config_path_maps(config)
+    except ValueError as exc:
+        print(f"[FATAL] {exc}", file=sys.stderr)
+        return 2
+
+    library_db = database_folder / LIBRARY_DB
+    blob_db = database_folder / BLOBS_DB
 
     print("PlexSubsExtractor")
     print("=================")
@@ -213,7 +283,7 @@ def main() -> int:
             if args.language and (language or "").casefold() != args.language.casefold():
                 continue
 
-            video_path = apply_path_maps(row["file"], args.path_map)
+            video_path = apply_path_maps(row["file"], path_maps)
             target = subtitle_filename(
                 video_path=video_path,
                 language=language,
