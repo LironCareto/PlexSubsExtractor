@@ -19,7 +19,9 @@ PlexSubsExtractor is deliberately conservative:
 - `PRAGMA query_only = ON` adds a second read-only safeguard.
 - The default mode is **dry-run**.
 - No subtitle file is created unless you explicitly pass `--write`.
-- Existing subtitle files are never overwritten by default. If a target exists, a numbered filename such as `Movie(1).eng.srt`, `Movie(2).eng.srt`, etc. is used, keeping Plex's language/forced suffix intact.
+- Existing subtitle files are never overwritten by default.
+- Before creating a file, the script compares SHA-256 hashes against existing sidecars for the same video/language/forced/format. Identical content is treated as already extracted and skipped.
+- If the filename collides but the subtitle content is different, a numbered filename such as `Movie(1).eng.srt`, `Movie(2).eng.srt`, etc. is used, keeping Plex's language/forced suffix intact.
 - The script contains no SQL writes or commits to the Plex databases.
 - Machine-specific paths can live in a local `config.json`, which is ignored by Git.
 
@@ -95,6 +97,22 @@ Once the dry-run looks correct:
 ```bash
 python3 plex_subs_extractor.py --write
 ```
+
+### Repeated and scheduled runs
+
+PlexSubsExtractor is idempotent for already-extracted subtitles. On later runs it calculates the SHA-256 of each Plex subtitle blob and compares it with the matching sidecars already on disk.
+
+If the exact subtitle is already present, it is reported as:
+
+```text
+[ALREADY EXTRACTED: identical SHA-256]
+```
+
+and no new file is created.
+
+If the sidecar was deleted, it is no longer present to match the hash, so the next run recreates it. No separate state file or list of previously processed blobs is required.
+
+This makes the script suitable for periodic execution by a scheduler.
 
 ### Override configuration from the command line
 
@@ -184,7 +202,7 @@ However, Plex itself may be updating its two databases while they are being read
 
 The database relationship used here is also used by [danrahn/PlexSubtitleExtractor](https://github.com/danrahn/PlexSubtitleExtractor), which was useful as a reference when verifying Plex's subtitle blob layout.
 
-This implementation focuses on a stricter safety model: hard SQLite read-only access, dry-run by default, explicit writes, collision-safe output naming, and local configuration for machine-specific paths.
+This implementation focuses on a stricter safety model: hard SQLite read-only access, dry-run by default, explicit writes, SHA-256-based idempotence, collision-safe output naming, and local configuration for machine-specific paths.
 
 ## License
 
