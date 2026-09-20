@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import argparse
 import gzip
+import hashlib
 import json
+import re
 import sqlite3
 import sys
 from pathlib import Path
@@ -123,6 +125,11 @@ def subtitle_filename(
     return Path(f"{stem}.{language_tag}{forced_tag}.{extension}")
 
 
+def subtitle_suffix(target: Path, video_path: Path) -> str:
+    """Return the Plex sidecar suffix, e.g. '.eng.srt' or '.eng.forced.srt'."""
+    return target.name[len(video_path.stem):]
+
+
 def unique_target(
     target: Path,
     video_path: Path,
@@ -133,16 +140,59 @@ def unique_target(
         return target, False
 
     video_stem = video_path.stem
-    subtitle_suffix = target.name[len(video_stem):]
+    suffix = subtitle_suffix(target, video_path)
 
     number = 1
     while True:
-        candidate = target.with_name(
-            f"{video_stem}({number}){subtitle_suffix}"
-        )
+        candidate = target.with_name(f"{video_stem}({number}){suffix}")
         if not candidate.exists() and candidate not in reserved:
             return candidate, True
         number += 1
+
+
+def sha256_bytes(data: bytes) -> str:
+    """Return the SHA-256 digest for subtitle bytes."""
+    return hashlib.sha256(data).hexdigest()
+
+
+def sha256_file(path: Path) -> str:
+    """Return the SHA-256 digest for a file without loading it all at once."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def matching_sidecars(base_target: Path, video_path: Path) -> list[Path]:
+    """Find base and numbered sidecars for the same video/language/forced/codec."""
+    parent = base_target.parent
+    if not parent.is_dir():
+        return []
+
+    video_stem = video_path.stem
+    suffix = subtitle_suffix(base_target, video_path)
+    pattern = re.compile(
+        rf"^{re.escape(video_stem)}(?:\(\d+\))?{re.escape(suffix)}$"
+    )
+
+    return sorted(
+        candidate
+        for candidate in parent.iterdir()
+        if candidate.is_file() and pattern.fullmatch(candidate.name)
+    )
+
+
+def find_identical_sidecar(
+    base_target: Path,
+    video_path: Path,
+    content_hash: str,
+) -> Path | None:
+    """Return an existing equivalent sidecar if its bytes have the same SHA-256."""
+    for candidate in matching_sidecars(base_target, video_path):
+        if sha256_file(candidate) == content_hash:
+            return candidate
+    return None
 
 
 def load_blobs(blob_db: Path) -> tuple[dict[int, bytes], int]:
@@ -286,10 +336,12 @@ def main() -> int:
 
     matched = 0
     written = 0
+    already_extracted = 0
     renamed_collisions = 0
     missing_media = 0
     errors = decompress_errors
     reserved_targets: set[Path] = set()
+    handled_hashes: dict[tuple[Path, str], Path] = {}
 
     try:
         for stream_id, subtitle_data in blobs.items():
@@ -317,6 +369,43 @@ def main() -> int:
                 codec=row["codec"],
             )
 
+            content_hash = sha256_bytes(subtitle_data)
+            hash_key = (base_target, content_hash)
+            identical_target = handled_hashes.get(hash_key)
+
+            if identical_target is None:
+                try:
+                    identical_target = find_identical_sidecar(
+                        base_target,
+                        video_path,
+                        content_hash,
+                    )
+                except OSError as exc:
+                    print(
+                        f"[ERROR] Could not hash an existing sidecar for "
+                        f"{video_path}: {exc}",
+                        file=sys.stderr,
+                    )
+                    errors += 1
+                    continue
+
+            matched += 1
+
+            print(f"[FOUND] {video_path}")
+            print(
+                f"        language={language or 'und'} "
+                f"codec={row['codec'] or 'unknown'} "
+                f"forced={'yes' if row['forced'] else 'no'}"
+            )
+
+            if identical_target is not None:
+                handled_hashes[hash_key] = identical_target
+                already_extracted += 1
+                print(f"     == {identical_target}")
+                print("        [ALREADY EXTRACTED: identical SHA-256]")
+                print()
+                continue
+
             if args.force:
                 target = base_target
                 renamed = False
@@ -326,14 +415,7 @@ def main() -> int:
                     renamed_collisions += 1
 
             reserved_targets.add(target)
-            matched += 1
-
-            print(f"[FOUND] {video_path}")
-            print(
-                f"        language={language or 'und'} "
-                f"codec={row['codec'] or 'unknown'} "
-                f"forced={'yes' if row['forced'] else 'no'}"
-            )
+            handled_hashes[hash_key] = target
             print(f"     -> {target}")
 
             if renamed:
@@ -369,6 +451,7 @@ def main() -> int:
     print(f"Subtitle blobs      : {len(blobs)}")
     print(f"Matched             : {matched}")
     print(f"Written             : {written}")
+    print(f"Already extracted   : {already_extracted}")
     print(f"Numbered collisions : {renamed_collisions}")
     print(f"Missing media       : {missing_media}")
     print(f"Errors              : {errors}")
