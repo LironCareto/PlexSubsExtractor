@@ -21,6 +21,7 @@ PlexSubsExtractor is deliberately conservative:
 - No subtitle file is created unless you explicitly pass `--write`.
 - Existing subtitle files are never overwritten unless you explicitly pass `--force`.
 - The script contains no SQL writes or commits to the Plex databases.
+- Machine-specific paths can live in a local `config.json`, which is ignored by Git.
 
 In other words, the script reads Plex's databases and writes subtitle sidecar files. It does not modify Plex's databases.
 
@@ -29,13 +30,43 @@ In other words, the script reads Plex's databases and writes subtitle sidecar fi
 - Python 3.10+
 - No third-party Python packages
 
+## Configuration
+
+Copy the example configuration:
+
+```bash
+cp config.example.json config.json
+```
+
+On PowerShell:
+
+```powershell
+Copy-Item config.example.json config.json
+```
+
+Then edit `config.json` with the paths that apply to your machine:
+
+```json
+{
+  "database_folder": "/path/to/Plex Media Server/Plug-in Support/Databases",
+  "path_maps": [
+    "/plex/media=/local/media"
+  ]
+}
+```
+
+`config.json` is listed in `.gitignore` and should remain local.
+
+The `--write` and `--force` safety switches are intentionally **not** configurable in the file. They must always be passed explicitly on the command line.
+
 ## Usage
 
 ### 1. Dry-run first
 
+With `config.json` present:
+
 ```bash
-python3 plex_subs_extractor.py \
-  -d "/path/to/Plex Media Server/Plug-in Support/Databases"
+python3 plex_subs_extractor.py
 ```
 
 This only shows what would be extracted.
@@ -43,9 +74,9 @@ This only shows what would be extracted.
 Example:
 
 ```text
-[FOUND] /media/Movies/Alien (1979)/Alien (1979).mkv
+[FOUND] /local/media/Movies/Alien (1979)/Alien (1979).mkv
         language=eng codec=srt forced=no
-     -> /media/Movies/Alien (1979)/Alien (1979).eng.srt
+     -> /local/media/Movies/Alien (1979)/Alien (1979).eng.srt
         [DRY RUN: not written]
 ```
 
@@ -54,41 +85,37 @@ Example:
 Once the dry-run looks correct:
 
 ```bash
-python3 plex_subs_extractor.py \
-  -d "/path/to/Plex Media Server/Plug-in Support/Databases" \
-  --write
+python3 plex_subs_extractor.py --write
 ```
 
-### Path mapping
+### Override configuration from the command line
 
-If Plex stores a media path as:
-
-```text
-/movies/Alien (1979)/Alien (1979).mkv
-```
-
-but the machine running the extractor sees it as:
-
-```text
-/srv/media/Movies/Alien (1979)/Alien (1979).mkv
-```
-
-use:
+The database folder can still be supplied directly:
 
 ```bash
 python3 plex_subs_extractor.py \
-  -d "/path/to/Databases" \
-  --path-map "/movies=/srv/media/Movies"
+  --database-folder "/path/to/Databases"
 ```
 
-`--path-map` can be supplied more than once.
+Path mappings can also be supplied directly:
+
+```bash
+python3 plex_subs_extractor.py \
+  --path-map "/plex/media=/local/media"
+```
+
+Command-line path mappings replace mappings from `config.json`.
+
+A different config file can be selected with:
+
+```bash
+python3 plex_subs_extractor.py --config "/path/to/another-config.json"
+```
 
 ### Filter by language
 
 ```bash
-python3 plex_subs_extractor.py \
-  -d "/path/to/Databases" \
-  --language eng
+python3 plex_subs_extractor.py --language eng
 ```
 
 The comparison is made against the language value stored by Plex for the subtitle stream.
@@ -100,10 +127,7 @@ Existing sidecar files are skipped by default.
 To overwrite them explicitly:
 
 ```bash
-python3 plex_subs_extractor.py \
-  -d "/path/to/Databases" \
-  --write \
-  --force
+python3 plex_subs_extractor.py --write --force
 ```
 
 ## How it works
@@ -146,7 +170,7 @@ However, Plex itself may be updating its two databases while they are being read
 
 The database relationship used here is also used by [danrahn/PlexSubtitleExtractor](https://github.com/danrahn/PlexSubtitleExtractor), which was useful as a reference when verifying Plex's subtitle blob layout.
 
-This implementation focuses on a stricter safety model: hard SQLite read-only access, dry-run by default, explicit writes, and optional path remapping.
+This implementation focuses on a stricter safety model: hard SQLite read-only access, dry-run by default, explicit writes, and local configuration for machine-specific paths.
 
 ## License
 
