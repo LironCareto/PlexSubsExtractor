@@ -1,6 +1,7 @@
 __pycache__/
 *.py[cod]
 *.log
+dryrun*.txt
 .venv/
 venv/
 .env
