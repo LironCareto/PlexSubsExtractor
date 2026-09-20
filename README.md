@@ -19,7 +19,7 @@ PlexSubsExtractor is deliberately conservative:
 - `PRAGMA query_only = ON` adds a second read-only safeguard.
 - The default mode is **dry-run**.
 - No subtitle file is created unless you explicitly pass `--write`.
-- Existing subtitle files are never overwritten by default. If a target exists, a numbered filename such as `Movie.eng (1).srt`, `Movie.eng (2).srt`, etc. is used.
+- Existing subtitle files are never overwritten by default. If a target exists, a numbered filename such as `Movie(1).eng.srt`, `Movie(2).eng.srt`, etc. is used, keeping Plex's language/forced suffix intact.
 - The script contains no SQL writes or commits to the Plex databases.
 - Machine-specific paths can live in a local `config.json`, which is ignored by Git.
 
@@ -83,10 +83,10 @@ Example:
 If that file already exists, the next subtitle with the same target becomes:
 
 ```text
-/local/media/Movies/Alien (1979)/Alien (1979).eng (1).srt
+/local/media/Movies/Alien (1979)/Alien (1979)(1).eng.srt
 ```
 
-then `(2)`, `(3)`, and so on.
+then `Alien (1979)(2).eng.srt`, `Alien (1979)(3).eng.srt`, and so on. Numbering is inserted before the language tag so Plex can still recognize the sidecar subtitle.
 
 ### 2. Write the subtitle files
 
@@ -158,6 +158,12 @@ Forced subtitles are named in Plex-compatible form:
 
 ```text
 Movie.eng.forced.srt
+```
+
+If that filename collides, numbering is inserted before the language/forced suffix:
+
+```text
+Movie(1).eng.forced.srt
 ```
 
 ## Should Plex be stopped first?
