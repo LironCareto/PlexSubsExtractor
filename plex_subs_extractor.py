@@ -123,6 +123,21 @@ def subtitle_filename(
     return Path(f"{stem}.{language_tag}{forced_tag}.{extension}")
 
 
+def unique_target(target: Path, reserved: set[Path]) -> tuple[Path, bool]:
+    """Return target or the first available ' (N)' variant without overwriting."""
+    if not target.exists() and target not in reserved:
+        return target, False
+
+    number = 1
+    while True:
+        candidate = target.with_name(
+            f"{target.stem} ({number}){target.suffix}"
+        )
+        if not candidate.exists() and candidate not in reserved:
+            return candidate, True
+        number += 1
+
+
 def load_blobs(blob_db: Path) -> tuple[dict[int, bytes], int]:
     """Load and decompress Plex subtitle blobs (blob_type=3)."""
     subtitles: dict[int, bytes] = {}
@@ -197,7 +212,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Overwrite existing subtitle files (only meaningful with --write).",
+        help=(
+            "Overwrite the base subtitle filename instead of creating numbered "
+            "alternatives when a target already exists."
+        ),
     )
     parser.add_argument(
         "--language",
@@ -261,9 +279,10 @@ def main() -> int:
 
     matched = 0
     written = 0
-    existing = 0
+    renamed_collisions = 0
     missing_media = 0
     errors = decompress_errors
+    reserved_targets: set[Path] = set()
 
     try:
         for stream_id, subtitle_data in blobs.items():
@@ -284,12 +303,22 @@ def main() -> int:
                 continue
 
             video_path = apply_path_maps(row["file"], path_maps)
-            target = subtitle_filename(
+            base_target = subtitle_filename(
                 video_path=video_path,
                 language=language,
                 forced=bool(row["forced"]),
                 codec=row["codec"],
             )
+
+            if args.force:
+                target = base_target
+                renamed = False
+            else:
+                target, renamed = unique_target(base_target, reserved_targets)
+                if renamed:
+                    renamed_collisions += 1
+
+            reserved_targets.add(target)
             matched += 1
 
             print(f"[FOUND] {video_path}")
@@ -300,11 +329,10 @@ def main() -> int:
             )
             print(f"     -> {target}")
 
-            if target.exists() and not args.force:
-                print("        [SKIP: target already exists]")
-                existing += 1
-                print()
-                continue
+            if renamed:
+                print("        [NAME COLLISION: using numbered filename]")
+            elif args.force and target.exists():
+                print("        [OVERWRITE: --force]")
 
             if not args.write:
                 print("        [DRY RUN: not written]")
@@ -331,12 +359,12 @@ def main() -> int:
 
     print("Summary")
     print("=======")
-    print(f"Subtitle blobs   : {len(blobs)}")
-    print(f"Matched          : {matched}")
-    print(f"Written          : {written}")
-    print(f"Already existing : {existing}")
-    print(f"Missing media    : {missing_media}")
-    print(f"Errors           : {errors}")
+    print(f"Subtitle blobs      : {len(blobs)}")
+    print(f"Matched             : {matched}")
+    print(f"Written             : {written}")
+    print(f"Numbered collisions : {renamed_collisions}")
+    print(f"Missing media       : {missing_media}")
+    print(f"Errors              : {errors}")
 
     if not args.write:
         print("\nDRY RUN ONLY. Nothing was written. Add --write to create sidecar files.")
