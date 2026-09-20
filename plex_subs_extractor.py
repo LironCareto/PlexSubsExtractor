@@ -123,15 +123,22 @@ def subtitle_filename(
     return Path(f"{stem}.{language_tag}{forced_tag}.{extension}")
 
 
-def unique_target(target: Path, reserved: set[Path]) -> tuple[Path, bool]:
-    """Return target or the first available ' (N)' variant without overwriting."""
+def unique_target(
+    target: Path,
+    video_path: Path,
+    reserved: set[Path],
+) -> tuple[Path, bool]:
+    """Return target or the first Plex-compatible numbered variant."""
     if not target.exists() and target not in reserved:
         return target, False
+
+    video_stem = video_path.stem
+    subtitle_suffix = target.name[len(video_stem):]
 
     number = 1
     while True:
         candidate = target.with_name(
-            f"{target.stem} ({number}){target.suffix}"
+            f"{video_stem}({number}){subtitle_suffix}"
         )
         if not candidate.exists() and candidate not in reserved:
             return candidate, True
@@ -314,7 +321,7 @@ def main() -> int:
                 target = base_target
                 renamed = False
             else:
-                target, renamed = unique_target(base_target, reserved_targets)
+                target, renamed = unique_target(base_target, video_path, reserved_targets)
                 if renamed:
                     renamed_collisions += 1
 
