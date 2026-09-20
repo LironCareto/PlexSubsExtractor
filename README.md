@@ -19,7 +19,7 @@ PlexSubsExtractor is deliberately conservative:
 - `PRAGMA query_only = ON` adds a second read-only safeguard.
 - The default mode is **dry-run**.
 - No subtitle file is created unless you explicitly pass `--write`.
-- Existing subtitle files are never overwritten unless you explicitly pass `--force`.
+- Existing subtitle files are never overwritten by default. If a target exists, a numbered filename such as `Movie.eng (1).srt`, `Movie.eng (2).srt`, etc. is used.
 - The script contains no SQL writes or commits to the Plex databases.
 - Machine-specific paths can live in a local `config.json`, which is ignored by Git.
 
@@ -27,7 +27,7 @@ In other words, the script reads Plex's databases and writes subtitle sidecar fi
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.8+
 - No third-party Python packages
 
 ## Configuration
@@ -69,7 +69,7 @@ With `config.json` present:
 python3 plex_subs_extractor.py
 ```
 
-This only shows what would be extracted.
+This only shows what would be extracted. Name collisions are also resolved during dry-run, so the planned filenames match what a real run would create.
 
 Example:
 
@@ -79,6 +79,14 @@ Example:
      -> /local/media/Movies/Alien (1979)/Alien (1979).eng.srt
         [DRY RUN: not written]
 ```
+
+If that file already exists, the next subtitle with the same target becomes:
+
+```text
+/local/media/Movies/Alien (1979)/Alien (1979).eng (1).srt
+```
+
+then `(2)`, `(3)`, and so on.
 
 ### 2. Write the subtitle files
 
@@ -120,11 +128,11 @@ python3 plex_subs_extractor.py --language eng
 
 The comparison is made against the language value stored by Plex for the subtitle stream.
 
-### Overwrite existing subtitles
+### Force overwriting the base filename
 
-Existing sidecar files are skipped by default.
+By default, existing subtitle files are preserved and collisions get numbered filenames.
 
-To overwrite them explicitly:
+If you explicitly want to overwrite the base target instead:
 
 ```bash
 python3 plex_subs_extractor.py --write --force
@@ -170,7 +178,7 @@ However, Plex itself may be updating its two databases while they are being read
 
 The database relationship used here is also used by [danrahn/PlexSubtitleExtractor](https://github.com/danrahn/PlexSubtitleExtractor), which was useful as a reference when verifying Plex's subtitle blob layout.
 
-This implementation focuses on a stricter safety model: hard SQLite read-only access, dry-run by default, explicit writes, and local configuration for machine-specific paths.
+This implementation focuses on a stricter safety model: hard SQLite read-only access, dry-run by default, explicit writes, collision-safe output naming, and local configuration for machine-specific paths.
 
 ## License
 
